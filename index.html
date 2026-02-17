@@ -1,529 +1,237 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>5v5 Soccer Game</title>
-  <style>
-    body {
-      margin: 0;
-      background: #111;
-      color: #fff;
-      font-family: Arial, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    #gameContainer {
-      position: relative;
-      margin-top: 10px;
-    }
-    canvas {
-      background: #0b5f2a;
-      border: 4px solid #fff;
-      display: block;
-    }
-    #hud {
-      margin-top: 8px;
-      text-align: center;
-    }
-    #hud span {
-      margin: 0 10px;
-      font-size: 18px;
-    }
-    #instructions {
-      margin-top: 8px;
-      font-size: 14px;
-      color: #ddd;
-    }
-    #restartBtn {
-      margin-top: 8px;
-      padding: 6px 12px;
-      font-size: 14px;
-      cursor: pointer;
-      border-radius: 4px;
-      border: none;
-      background: #1e88e5;
-      color: #fff;
-    }
-    #restartBtn:disabled {
-      background: #555;
-      cursor: default;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>3D Soccer Game</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #111; }
+  #hud {
+    position: absolute;
+    top: 10px; left: 50%;
+    transform: translateX(-50%);
+    color: white; font-family: Arial; font-size: 20px;
+    text-align: center;
+  }
+</style>
 </head>
 <body>
-  <h2>5v5 Mini Soccer</h2>
-  <div id="gameContainer">
-    <canvas id="game" width="900" height="500"></canvas>
-  </div>
-  <div id="hud">
-    <span id="score">Home 0 - 0 Away</span>
-    <span id="timer">03:00</span>
-  </div>
-  <div id="instructions">
-    <div><strong>Controls (Home Team):</strong> Move: W/A/S/D &nbsp;|&nbsp; Shoot/Pass: Space</div>
-    <div>Ball auto-switches to nearest teammate when you receive it. Simple AI controls the away team.</div>
-  </div>
-  <button id="restartBtn" disabled>Restart Match</button>
 
-  <script>
-    // Basic 5v5 soccer game, no real names or copyrighted content.
+<div id="hud">
+  <div id="score">Home 0 - 0 Away</div>
+  <div id="timer">03:00</div>
+</div>
 
-    const canvas = document.getElementById("game");
-    const ctx = canvas.getContext("2d");
-    const scoreEl = document.getElementById("score");
-    const timerEl = document.getElementById("timer");
-    const restartBtn = document.getElementById("restartBtn");
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-    const FIELD_WIDTH = canvas.width;
-    const FIELD_HEIGHT = canvas.height;
-    const GOAL_WIDTH = 140;
-    const GOAL_DEPTH = 10;
-    const PLAYER_RADIUS = 12;
-    const BALL_RADIUS = 7;
+<script>
+/* -------------------------------------------------------
+   BASIC 3D SETUP
+------------------------------------------------------- */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b5f2a);
 
-    const MATCH_TIME_SECONDS = 3 * 60; // 3 minutes
-    let remainingTime = MATCH_TIME_SECONDS;
-    let lastTimeStamp = null;
-    let gameOver = false;
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 5000);
+camera.position.set(0, 120, 220);
 
-    const keys = {};
-    window.addEventListener("keydown", (e) => {
-      keys[e.key.toLowerCase()] = true;
-      if (e.key === " " || e.code === "Space") {
-        e.preventDefault();
-      }
-    });
-    window.addEventListener("keyup", (e) => {
-      keys[e.key.toLowerCase()] = false;
-    });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
 
-    const teamHomeColor = "#00d4ff";
-    const teamAwayColor = "#ff5252";
+/* -------------------------------------------------------
+   LIGHTING
+------------------------------------------------------- */
+const light = new THREE.DirectionalLight(0xffffff, 1.2);
+light.position.set(100, 200, 100);
+scene.add(light);
 
-    function createTeam(isHome) {
-      const players = [];
-      const sideX = isHome ? FIELD_WIDTH * 0.25 : FIELD_WIDTH * 0.75;
-      const spacingY = FIELD_HEIGHT / 6;
-      for (let i = 0; i < 5; i++) {
-        players.push({
-          x: sideX + (Math.random() - 0.5) * 40,
-          y: spacingY * (i + 1) + (Math.random() - 0.5) * 20,
-          vx: 0,
-          vy: 0,
-          speed: 2.2,
-          hasBall: false,
-        });
-      }
-      return players;
-    }
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
 
-    let homeTeam, awayTeam, ball, scoreHome, scoreAway, possessionTeam; // 0 home, 1 away
+/* -------------------------------------------------------
+   FIELD
+------------------------------------------------------- */
+const fieldGeo = new THREE.PlaneGeometry(400, 250);
+const fieldMat = new THREE.MeshLambertMaterial({ color: 0x0b5f2a });
+const field = new THREE.Mesh(fieldGeo, fieldMat);
+field.rotation.x = -Math.PI / 2;
+scene.add(field);
 
-    function resetBall(kickoffToHome = true) {
-      ball = {
-        x: FIELD_WIDTH / 2,
-        y: FIELD_HEIGHT / 2,
-        vx: 0,
-        vy: 0,
-        free: true,
-      };
-      possessionTeam = kickoffToHome ? 0 : 1;
-      const team = possessionTeam === 0 ? homeTeam : awayTeam;
-      const kicker = team[2]; // central player
-      ball.x = kicker.x + (possessionTeam === 0 ? 15 : -15);
-      ball.y = kicker.y;
-      ball.free = false;
-      kicker.hasBall = true;
-    }
+/* Lines */
+function makeLine(w, h, x, z) {
+  const geo = new THREE.PlaneGeometry(w, h);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const line = new THREE.Mesh(geo, mat);
+  line.rotation.x = -Math.PI/2;
+  line.position.set(x, 0.1, z);
+  scene.add(line);
+}
+makeLine(2, 250, 0, 0); // midline
+makeLine(60, 60, 0, 0); // center circle
 
-    function resetMatch() {
-      homeTeam = createTeam(true);
-      awayTeam = createTeam(false);
-      scoreHome = 0;
-      scoreAway = 0;
-      remainingTime = MATCH_TIME_SECONDS;
-      gameOver = false;
-      lastTimeStamp = null;
-      homeTeam.forEach(p => p.hasBall = false);
-      awayTeam.forEach(p => p.hasBall = false);
-      resetBall(true);
-      updateScoreText();
-      updateTimerText();
-      restartBtn.disabled = true;
-    }
+/* -------------------------------------------------------
+   PLAYERS
+------------------------------------------------------- */
+function makePlayer(color) {
+  const geo = new THREE.CapsuleGeometry(4, 12, 4, 8);
+  const mat = new THREE.MeshLambertMaterial({ color });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.y = 10;
+  return mesh;
+}
 
-    function updateScoreText() {
-      scoreEl.textContent = `Home ${scoreHome} - ${scoreAway} Away`;
-    }
+const homeTeam = [];
+const awayTeam = [];
 
-    function updateTimerText() {
-      const m = Math.floor(remainingTime / 60);
-      const s = remainingTime % 60;
-      timerEl.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    }
+for (let i = 0; i < 5; i++) {
+  const h = makePlayer(0x00d4ff);
+  h.position.set(-120, 10, -80 + i * 40);
+  homeTeam.push(h);
+  scene.add(h);
 
-    function distance(a, b) {
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      return Math.sqrt(dx * dx + dy * dy);
-    }
+  const a = makePlayer(0xff5252);
+  a.position.set(120, 10, -80 + i * 40);
+  awayTeam.push(a);
+  scene.add(a);
+}
 
-    function clamp(val, min, max) {
-      return Math.max(min, Math.min(max, val));
-    }
+/* -------------------------------------------------------
+   BALL
+------------------------------------------------------- */
+const ballGeo = new THREE.SphereGeometry(5, 16, 16);
+const ballMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+const ball = new THREE.Mesh(ballGeo, ballMat);
+ball.position.set(0, 5, 0);
+scene.add(ball);
 
-    function updateTimer(delta) {
-      if (gameOver) return;
-      remainingTime -= delta;
-      if (remainingTime <= 0) {
-        remainingTime = 0;
-        gameOver = true;
-        restartBtn.disabled = false;
-      }
-      updateTimerText();
-    }
+let ballVel = new THREE.Vector3(0, 0, 0);
 
-    function handleHomeInput() {
-      const carrierIndex = homeTeam.findIndex(p => p.hasBall);
-      let carrier = carrierIndex >= 0 ? homeTeam[carrierIndex] : homeTeam[0];
+/* -------------------------------------------------------
+   GAME STATE
+------------------------------------------------------- */
+let scoreHome = 0;
+let scoreAway = 0;
+let possession = 0; // 0 home, 1 away
+let remaining = 180; // 3 minutes
+let lastTime = performance.now();
 
-      let moveX = 0;
-      let moveY = 0;
-      if (keys["w"]) moveY -= 1;
-      if (keys["s"]) moveY += 1;
-      if (keys["a"]) moveX -= 1;
-      if (keys["d"]) moveX += 1;
+const scoreEl = document.getElementById("score");
+const timerEl = document.getElementById("timer");
 
-      const len = Math.hypot(moveX, moveY) || 1;
-      moveX /= len;
-      moveY /= len;
+/* -------------------------------------------------------
+   INPUT
+------------------------------------------------------- */
+const keys = {};
+window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
 
-      carrier.vx = moveX * carrier.speed;
-      carrier.vy = moveY * carrier.speed;
+/* -------------------------------------------------------
+   HOME PLAYER CONTROL
+------------------------------------------------------- */
+function controlHome() {
+  const p = homeTeam[2]; // main controlled player
+  let speed = 1.2;
 
-      if ((keys[" "] || keys["space"]) && carrier.hasBall && !gameOver) {
-        // Simple shoot/pass: kick towards opponent goal center
-        const targetX = FIELD_WIDTH - 20;
-        const targetY = FIELD_HEIGHT / 2;
-        const dx = targetX - ball.x;
-        const dy = targetY - ball.y;
-        const dlen = Math.hypot(dx, dy) || 1;
-        const power = 5.0;
-        ball.vx = (dx / dlen) * power;
-        ball.vy = (dy / dlen) * power;
-        ball.free = true;
-        carrier.hasBall = false;
-      }
-    }
+  if (keys["w"]) p.position.z -= speed;
+  if (keys["s"]) p.position.z += speed;
+  if (keys["a"]) p.position.x -= speed;
+  if (keys["d"]) p.position.x += speed;
 
-    function updateHomeTeam() {
-      handleHomeInput();
-      for (const p of homeTeam) {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.x = clamp(p.x, PLAYER_RADIUS, FIELD_WIDTH - PLAYER_RADIUS);
-        p.y = clamp(p.y, PLAYER_RADIUS, FIELD_HEIGHT - PLAYER_RADIUS);
-        p.vx *= 0.85;
-        p.vy *= 0.85;
-      }
-    }
+  if (keys[" "]) {
+    // shoot toward right goal
+    ballVel.set(2.5, 0, (Math.random() - 0.5) * 1.2);
+  }
+}
 
-    function updateAwayTeamAI() {
-      // Simple AI: nearest player to ball chases it, others move into lanes
-      let nearestIndex = 0;
-      let nearestDist = Infinity;
-      for (let i = 0; i < awayTeam.length; i++) {
-        const d = distance(awayTeam[i], ball);
-        if (d < nearestDist) {
-          nearestDist = d;
-          nearestIndex = i;
-        }
-      }
+/* -------------------------------------------------------
+   SIMPLE AI
+------------------------------------------------------- */
+function aiAway() {
+  const target = ball.position;
+  const chaser = awayTeam[2];
 
-      for (let i = 0; i < awayTeam.length; i++) {
-        const p = awayTeam[i];
-        let targetX, targetY;
+  const dir = new THREE.Vector3().subVectors(target, chaser.position).normalize();
+  chaser.position.add(dir.multiplyScalar(0.8));
 
-        if (i === nearestIndex) {
-          targetX = ball.x;
-          targetY = ball.y;
-        } else {
-          // Positioning lanes
-          const laneY = (FIELD_HEIGHT / 6) * (i + 1);
-          targetX = FIELD_WIDTH * 0.7;
-          targetY = laneY;
-        }
+  // AI shoots randomly
+  if (Math.random() < 0.005) {
+    ballVel.set(-2.5, 0, (Math.random() - 0.5) * 1.2);
+  }
+}
 
-        const dx = targetX - p.x;
-        const dy = targetY - p.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const speed = p.hasBall ? 2.4 : 2.0;
-        p.vx = (dx / len) * speed;
-        p.vy = (dy / len) * speed;
+/* -------------------------------------------------------
+   BALL PHYSICS
+------------------------------------------------------- */
+function updateBall() {
+  ball.position.add(ballVel);
+  ballVel.multiplyScalar(0.98);
 
-        p.x += p.vx;
-        p.y += p.vy;
-        p.x = clamp(p.x, PLAYER_RADIUS, FIELD_WIDTH - PLAYER_RADIUS);
-        p.y = clamp(p.y, PLAYER_RADIUS, FIELD_HEIGHT - PLAYER_RADIUS);
-      }
+  // boundaries
+  if (ball.position.x > 200) ball.position.x = 200;
+  if (ball.position.x < -200) ball.position.x = -200;
+  if (ball.position.z > 120) ball.position.z = 120;
+  if (ball.position.z < -120) ball.position.z = -120;
 
-      // If AI has ball, occasionally shoot towards home goal
-      const carrierIndex = awayTeam.findIndex(p => p.hasBall);
-      if (carrierIndex >= 0 && !gameOver) {
-        const carrier = awayTeam[carrierIndex];
-        if (Math.random() < 0.02) {
-          const targetX = 20;
-          const targetY = FIELD_HEIGHT / 2;
-          const dx = targetX - ball.x;
-          const dy = targetY - ball.y;
-          const dlen = Math.hypot(dx, dy) || 1;
-          const power = 5.0;
-          ball.vx = (dx / dlen) * power;
-          ball.vy = (dy / dlen) * power;
-          ball.free = true;
-          carrier.hasBall = false;
-        }
-      }
-    }
+  // goal detection
+  if (ball.position.x > 195 && Math.abs(ball.position.z) < 40) {
+    scoreHome++;
+    resetBall();
+  }
+  if (ball.position.x < -195 && Math.abs(ball.position.z) < 40) {
+    scoreAway++;
+    resetBall();
+  }
 
-    function updateBall() {
-      if (ball.free) {
-        ball.x += ball.vx;
-        ball.y += ball.vy;
+  scoreEl.textContent = `Home ${scoreHome} - ${scoreAway} Away`;
+}
 
-        // Friction
-        ball.vx *= 0.99;
-        ball.vy *= 0.99;
+function resetBall() {
+  ball.position.set(0, 5, 0);
+  ballVel.set(0, 0, 0);
+}
 
-        // Walls
-        if (ball.y < BALL_RADIUS) {
-          ball.y = BALL_RADIUS;
-          ball.vy *= -0.7;
-        }
-        if (ball.y > FIELD_HEIGHT - BALL_RADIUS) {
-          ball.y = FIELD_HEIGHT - BALL_RADIUS;
-          ball.vy *= -0.7;
-        }
-        if (ball.x < BALL_RADIUS) {
-          ball.x = BALL_RADIUS;
-          ball.vx *= -0.7;
-        }
-        if (ball.x > FIELD_WIDTH - BALL_RADIUS) {
-          ball.x = FIELD_WIDTH - BALL_RADIUS;
-          ball.vx *= -0.7;
-        }
+/* -------------------------------------------------------
+   TIMER
+------------------------------------------------------- */
+function updateTimer() {
+  const now = performance.now();
+  const delta = (now - lastTime) / 1000;
+  lastTime = now;
 
-        // Very small velocity -> stop
-        if (Math.hypot(ball.vx, ball.vy) < 0.05) {
-          ball.vx = 0;
-          ball.vy = 0;
-        }
-      } else {
-        // Attach to carrier
-        const team = possessionTeam === 0 ? homeTeam : awayTeam;
-        const carrier = team.find(p => p.hasBall);
-        if (carrier) {
-          const offset = possessionTeam === 0 ? 10 : -10;
-          ball.x = carrier.x + offset;
-          ball.y = carrier.y;
-        }
-      }
-    }
+  remaining -= delta;
+  if (remaining < 0) remaining = 0;
 
-    function handleCollisions() {
-      // Ball with players
-      const allPlayers = homeTeam.map(p => ({ ...p, team: 0, ref: p }))
-        .concat(awayTeam.map(p => ({ ...p, team: 1, ref: p })));
+  const m = Math.floor(remaining / 60);
+  const s = Math.floor(remaining % 60);
+  timerEl.textContent = `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+}
 
-      if (ball.free) {
-        for (const p of allPlayers) {
-          const d = distance(p, ball);
-          if (d < PLAYER_RADIUS + BALL_RADIUS + 2) {
-            // Possession change
-            possessionTeam = p.team;
-            allPlayers.forEach(pl => pl.ref.hasBall = false);
-            p.ref.hasBall = true;
-            ball.free = false;
-            ball.vx = 0;
-            ball.vy = 0;
-            break;
-          }
-        }
-      }
+/* -------------------------------------------------------
+   CAMERA FOLLOW
+------------------------------------------------------- */
+function updateCamera() {
+  camera.position.lerp(
+    new THREE.Vector3(ball.position.x, 120, ball.position.z + 200),
+    0.05
+  );
+  camera.lookAt(ball.position);
+}
 
-      // Simple player-player separation
-      for (let i = 0; i < homeTeam.length; i++) {
-        for (let j = i + 1; j < homeTeam.length; j++) {
-          separatePlayers(homeTeam[i], homeTeam[j]);
-        }
-      }
-      for (let i = 0; i < awayTeam.length; i++) {
-        for (let j = i + 1; j < awayTeam.length; j++) {
-          separatePlayers(awayTeam[i], awayTeam[j]);
-        }
-      }
-      for (let i = 0; i < homeTeam.length; i++) {
-        for (let j = 0; j < awayTeam.length; j++) {
-          separatePlayers(homeTeam[i], awayTeam[j]);
-        }
-      }
+/* -------------------------------------------------------
+   MAIN LOOP
+------------------------------------------------------- */
+function animate() {
+  requestAnimationFrame(animate);
 
-      // Goals
-      checkGoals();
-    }
+  controlHome();
+  aiAway();
+  updateBall();
+  updateTimer();
+  updateCamera();
 
-    function separatePlayers(a, b) {
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = PLAYER_RADIUS * 2;
-      if (dist > 0 && dist < minDist) {
-        const overlap = (minDist - dist) / 2;
-        const nx = dx / dist;
-        const ny = dy / dist;
-        a.x -= nx * overlap;
-        a.y -= ny * overlap;
-        b.x += nx * overlap;
-        b.y += ny * overlap;
-      }
-    }
+  renderer.render(scene, camera);
+}
 
-    function checkGoals() {
-      // Left goal: home concedes, away scores
-      const inLeftGoalY = ball.y > FIELD_HEIGHT / 2 - GOAL_WIDTH / 2 &&
-                          ball.y < FIELD_HEIGHT / 2 + GOAL_WIDTH / 2;
-      if (ball.x <= BALL_RADIUS + GOAL_DEPTH && inLeftGoalY) {
-        scoreAway++;
-        updateScoreText();
-        homeTeam.forEach(p => p.hasBall = false);
-        awayTeam.forEach(p => p.hasBall = false);
-        resetBall(true);
-      }
+animate();
+</script>
 
-      // Right goal: away concedes, home scores
-      const inRightGoalY = inLeftGoalY;
-      if (ball.x >= FIELD_WIDTH - BALL_RADIUS - GOAL_DEPTH && inRightGoalY) {
-        scoreHome++;
-        updateScoreText();
-        homeTeam.forEach(p => p.hasBall = false);
-        awayTeam.forEach(p => p.hasBall = false);
-        resetBall(false);
-      }
-    }
-
-    function drawField() {
-      // Grass
-      ctx.fillStyle = "#0b5f2a";
-      ctx.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
-
-      // Mid line
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(FIELD_WIDTH / 2, 0);
-      ctx.lineTo(FIELD_WIDTH / 2, FIELD_HEIGHT);
-      ctx.stroke();
-
-      // Center circle
-      ctx.beginPath();
-      ctx.arc(FIELD_WIDTH / 2, FIELD_HEIGHT / 2, 60, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Goals
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, FIELD_HEIGHT / 2 - GOAL_WIDTH / 2, GOAL_DEPTH, GOAL_WIDTH);
-      ctx.fillRect(FIELD_WIDTH - GOAL_DEPTH, FIELD_HEIGHT / 2 - GOAL_WIDTH / 2, GOAL_DEPTH, GOAL_WIDTH);
-
-      // Penalty boxes (simple rectangles)
-      ctx.strokeStyle = "#ffffff";
-      ctx.strokeRect(0, FIELD_HEIGHT / 2 - 120, 80, 240);
-      ctx.strokeRect(FIELD_WIDTH - 80, FIELD_HEIGHT / 2 - 120, 80, 240);
-    }
-
-    function drawPlayers() {
-      // Home
-      for (const p of homeTeam) {
-        ctx.beginPath();
-        ctx.fillStyle = teamHomeColor;
-        ctx.arc(p.x, p.y, PLAYER_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        if (p.hasBall) {
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
-      // Away
-      for (const p of awayTeam) {
-        ctx.beginPath();
-        ctx.fillStyle = teamAwayColor;
-        ctx.arc(p.x, p.y, PLAYER_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        if (p.hasBall) {
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
-    }
-
-    function drawBall() {
-      ctx.beginPath();
-      ctx.fillStyle = "#f5f5f5";
-      ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#999";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-
-    function drawOverlay() {
-      if (gameOver) {
-        ctx.fillStyle = "rgba(0,0,0,0.6)";
-        ctx.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
-        ctx.fillStyle = "#fff";
-        ctx.textAlign = "center";
-        ctx.font = "32px Arial";
-        let result = "Draw!";
-        if (scoreHome > scoreAway) result = "Home Wins!";
-        else if (scoreAway > scoreHome) result = "Away Wins!";
-        ctx.fillText(result, FIELD_WIDTH / 2, FIELD_HEIGHT / 2 - 10);
-        ctx.font = "18px Arial";
-        ctx.fillText("Press Restart Match to play again", FIELD_WIDTH / 2, FIELD_HEIGHT / 2 + 20);
-      }
-    }
-
-    function gameLoop(timestamp) {
-      if (!lastTimeStamp) lastTimeStamp = timestamp;
-      const deltaMs = timestamp - lastTimeStamp;
-      lastTimeStamp = timestamp;
-      const deltaSec = deltaMs / 1000;
-
-      if (!gameOver) {
-        updateTimer(Math.floor(deltaSec)); // coarse timer: 1-second steps
-      }
-
-      updateHomeTeam();
-      updateAwayTeamAI();
-      updateBall();
-      handleCollisions();
-
-      drawField();
-      drawPlayers();
-      drawBall();
-      drawOverlay();
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    restartBtn.addEventListener("click", () => {
-      resetMatch();
-    });
-
-    // Start
-    resetMatch();
-    requestAnimationFrame(gameLoop);
-  </script>
 </body>
 </html>
