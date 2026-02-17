@@ -1,192 +1,132 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>3D Soccer Game (Fixed)</title>
-<style>
-  body { margin: 0; overflow: hidden; background: #111; }
-  #hud {
-    position: absolute;
-    top: 10px; left: 50%;
-    transform: translateX(-50%);
-    color: white; font-family: Arial; font-size: 20px;
-    text-align: center;
-  }
-</style>
+    <meta charset="UTF-8">
+    <title>FC 26 Mini - 5v5</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        #ui { position: absolute; top: 20px; width: 100%; text-align: center; color: white; pointer-events: none; text-shadow: 2px 2px 4px #000; }
+        #timer { font-size: 24px; }
+        #score { font-size: 48px; font-weight: bold; }
+    </style>
 </head>
 <body>
+    <div id="ui">
+        <div id="score">BLUE 0 - 0 RED</div>
+        <div id="timer">03:00</div>
+    </div>
 
-<div id="hud">
-  <div id="score">Home 0 - 0 Away</div>
-  <div id="timer">03:00</div>
-</div>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
 
-<!-- Updated Three.js CDN -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r155/three.min.js"></script>
+    <script type="module">
+        import * as THREE from 'three';
 
-<script>
-/* -------------------------------------------------------
-   BASIC 3D SETUP
-------------------------------------------------------- */
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b5f2a);
+        // --- Game Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
 
-const camera = new THREE.PerspectiveCamera(
-  60,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  5000
-);
+        const clock = new THREE.Clock();
+        let timeLeft = 180;
+        let score = { blue: 0, red: 0 };
 
-// GUARANTEED visible camera angle
-camera.position.set(0, 200, 300);
-camera.lookAt(0, 0, 0);
+        // --- Lighting ---
+        const sun = new THREE.DirectionalLight(0xffffff, 1);
+        sun.position.set(5, 10, 7.5);
+        scene.add(sun);
+        scene.add(new THREE.AmbientLight(0x404040));
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
-document.body.appendChild(renderer.domElement);
+        // --- Pitch ---
+        const pitchGeo = new THREE.PlaneGeometry(60, 40);
+        const pitchMat = new THREE.MeshPhongMaterial({ color: 0x2e7d32 });
+        const pitch = new THREE.Mesh(pitchGeo, pitchMat);
+        pitch.rotation.x = -Math.PI / 2;
+        scene.add(pitch);
 
-/* -------------------------------------------------------
-   LIGHTING (stronger)
-------------------------------------------------------- */
-const sun = new THREE.DirectionalLight(0xffffff, 1.5);
-sun.position.set(200, 300, 200);
-sun.castShadow = true;
-scene.add(sun);
+        // --- Ball ---
+        const ballGeo = new THREE.SphereGeometry(0.4, 16, 16);
+        const ballMat = new THREE.MeshPhongMaterial({ color: 0xffffff });
+        const ball = new THREE.Mesh(ballGeo, ballMat);
+        ball.position.y = 0.4;
+        scene.add(ball);
+        let ballVel = new THREE.Vector3();
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        // --- Players ---
+        const players = [];
+        const createPlayer = (team, pos) => {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.7, 4, 8), new THREE.MeshPhongMaterial({ color: team }));
+            body.position.y = 0.5;
+            group.add(body);
+            group.position.set(pos.x, 0, pos.z);
+            scene.add(group);
+            return { mesh: group, team: team, vel: new THREE.Vector3() };
+        };
 
-/* -------------------------------------------------------
-   GRID (so you ALWAYS see something)
-------------------------------------------------------- */
-const grid = new THREE.GridHelper(500, 20, 0xffffff, 0xffffff);
-grid.position.y = 0.1;
-scene.add(grid);
+        // Spawn 5v5
+        for(let i=0; i<5; i++) {
+            players.push(createPlayer(0x0000ff, { x: -10 - (i*2), z: (i-2)*5 })); // Blue
+            players.push(createPlayer(0xff0000, { x: 10 + (i*2), z: (i-2)*5 }));  // Red
+        }
 
-/* -------------------------------------------------------
-   FIELD
-------------------------------------------------------- */
-const fieldGeo = new THREE.PlaneGeometry(400, 250);
-const fieldMat = new THREE.MeshLambertMaterial({ color: 0x0b5f2a });
-const field = new THREE.Mesh(fieldGeo, fieldMat);
-field.rotation.x = -Math.PI / 2;
-field.receiveShadow = true;
-scene.add(field);
+        camera.position.set(0, 25, 25);
+        camera.lookAt(0, 0, 0);
 
-/* -------------------------------------------------------
-   PLAYERS
-------------------------------------------------------- */
-function makePlayer(color) {
-  const geo = new THREE.CapsuleGeometry(5, 15, 4, 8);
-  const mat = new THREE.MeshLambertMaterial({ color });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.y = 12;
-  mesh.castShadow = true;
-  return mesh;
-}
+        // --- Basic Logic ---
+        function update() {
+            const dt = clock.getDelta();
+            
+            // Ball Physics
+            ball.position.add(ballVel);
+            ballVel.multiplyScalar(0.98); // Friction
 
-const homeTeam = [];
-const awayTeam = [];
+            players.forEach(p => {
+                // Simple AI: Move toward ball
+                const dir = new THREE.Vector3().subVectors(ball.position, p.mesh.position).normalize();
+                p.mesh.position.add(dir.multiplyScalar(0.1));
+                
+                // Kick ball if close
+                if(p.mesh.position.distanceTo(ball.position) < 1.2) {
+                    const kickDir = new THREE.Vector3(p.team === 0x0000ff ? 1 : -1, 0, (Math.random()-0.5)).normalize();
+                    ballVel.copy(kickDir.multiplyScalar(0.5));
+                }
+            });
 
-for (let i = 0; i < 5; i++) {
-  const h = makePlayer(0x00d4ff);
-  h.position.set(-120, 12, -80 + i * 40);
-  homeTeam.push(h);
-  scene.add(h);
+            // Boundary & Goal Check
+            if(Math.abs(ball.position.x) > 30) {
+                if(ball.position.x > 0) score.blue++; else score.red++;
+                document.getElementById('score').innerText = `BLUE ${score.blue} - ${score.red} RED`;
+                ball.position.set(0, 0.4, 0);
+                ballVel.set(0,0,0);
+            }
+            if(Math.abs(ball.position.z) > 20) ballVel.z *= -1;
 
-  const a = makePlayer(0xff5252);
-  a.position.set(120, 12, -80 + i * 40);
-  awayTeam.push(a);
-  scene.add(a);
-}
+            // Timer
+            if(timeLeft > 0) {
+                timeLeft -= dt;
+                const mins = Math.floor(timeLeft/60);
+                const secs = Math.floor(timeLeft%60);
+                document.getElementById('timer').innerText = `${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+            }
+        }
 
-/* -------------------------------------------------------
-   BALL
-------------------------------------------------------- */
-const ballGeo = new THREE.SphereGeometry(6, 16, 16);
-const ballMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-const ball = new THREE.Mesh(ballGeo, ballMat);
-ball.position.set(0, 6, 0);
-ball.castShadow = true;
-scene.add(ball);
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+            renderer.render(scene, camera);
+        }
+        animate();
 
-let ballVel = new THREE.Vector3(0, 0, 0);
-
-/* -------------------------------------------------------
-   INPUT
-------------------------------------------------------- */
-const keys = {};
-window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-
-/* -------------------------------------------------------
-   HOME CONTROL
-------------------------------------------------------- */
-function controlHome() {
-  const p = homeTeam[2];
-  const speed = 1.2;
-
-  if (keys["w"]) p.position.z -= speed;
-  if (keys["s"]) p.position.z += speed;
-  if (keys["a"]) p.position.x -= speed;
-  if (keys["d"]) p.position.x += speed;
-
-  if (keys[" "]) {
-    ballVel.set(3, 0, (Math.random() - 0.5) * 2);
-  }
-}
-
-/* -------------------------------------------------------
-   AI
-------------------------------------------------------- */
-function aiAway() {
-  const chaser = awayTeam[2];
-  const dir = new THREE.Vector3().subVectors(ball.position, chaser.position).normalize();
-  chaser.position.add(dir.multiplyScalar(0.8));
-
-  if (Math.random() < 0.005) {
-    ballVel.set(-3, 0, (Math.random() - 0.5) * 2);
-  }
-}
-
-/* -------------------------------------------------------
-   BALL PHYSICS
-------------------------------------------------------- */
-function updateBall() {
-  ball.position.add(ballVel);
-  ballVel.multiplyScalar(0.98);
-
-  // boundaries
-  ball.position.x = Math.max(-200, Math.min(200, ball.position.x));
-  ball.position.z = Math.max(-120, Math.min(120, ball.position.z));
-}
-
-/* -------------------------------------------------------
-   CAMERA FOLLOW
-------------------------------------------------------- */
-function updateCamera() {
-  const target = new THREE.Vector3(ball.position.x, 200, ball.position.z + 300);
-  camera.position.lerp(target, 0.05);
-  camera.lookAt(ball.position);
-}
-
-/* -------------------------------------------------------
-   MAIN LOOP
-------------------------------------------------------- */
-function animate() {
-  requestAnimationFrame(animate);
-
-  controlHome();
-  aiAway();
-  updateBall();
-  updateCamera();
-
-  renderer.render(scene, camera);
-}
-
-animate();
-</script>
-
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 </body>
 </html>
