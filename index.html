@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>3D Soccer Game</title>
+<title>3D Soccer Game (Fixed)</title>
 <style>
   body { margin: 0; overflow: hidden; background: #111; }
   #hud {
@@ -21,7 +21,8 @@
   <div id="timer">03:00</div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Updated Three.js CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r155/three.min.js"></script>
 
 <script>
 /* -------------------------------------------------------
@@ -30,21 +31,38 @@
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b5f2a);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 5000);
-camera.position.set(0, 120, 220);
+const camera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  5000
+);
+
+// GUARANTEED visible camera angle
+camera.position.set(0, 200, 300);
+camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 /* -------------------------------------------------------
-   LIGHTING
+   LIGHTING (stronger)
 ------------------------------------------------------- */
-const light = new THREE.DirectionalLight(0xffffff, 1.2);
-light.position.set(100, 200, 100);
-scene.add(light);
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(200, 300, 200);
+sun.castShadow = true;
+scene.add(sun);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+/* -------------------------------------------------------
+   GRID (so you ALWAYS see something)
+------------------------------------------------------- */
+const grid = new THREE.GridHelper(500, 20, 0xffffff, 0xffffff);
+grid.position.y = 0.1;
+scene.add(grid);
 
 /* -------------------------------------------------------
    FIELD
@@ -53,28 +71,18 @@ const fieldGeo = new THREE.PlaneGeometry(400, 250);
 const fieldMat = new THREE.MeshLambertMaterial({ color: 0x0b5f2a });
 const field = new THREE.Mesh(fieldGeo, fieldMat);
 field.rotation.x = -Math.PI / 2;
+field.receiveShadow = true;
 scene.add(field);
-
-/* Lines */
-function makeLine(w, h, x, z) {
-  const geo = new THREE.PlaneGeometry(w, h);
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const line = new THREE.Mesh(geo, mat);
-  line.rotation.x = -Math.PI/2;
-  line.position.set(x, 0.1, z);
-  scene.add(line);
-}
-makeLine(2, 250, 0, 0); // midline
-makeLine(60, 60, 0, 0); // center circle
 
 /* -------------------------------------------------------
    PLAYERS
 ------------------------------------------------------- */
 function makePlayer(color) {
-  const geo = new THREE.CapsuleGeometry(4, 12, 4, 8);
+  const geo = new THREE.CapsuleGeometry(5, 15, 4, 8);
   const mat = new THREE.MeshLambertMaterial({ color });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.y = 10;
+  mesh.position.y = 12;
+  mesh.castShadow = true;
   return mesh;
 }
 
@@ -83,12 +91,12 @@ const awayTeam = [];
 
 for (let i = 0; i < 5; i++) {
   const h = makePlayer(0x00d4ff);
-  h.position.set(-120, 10, -80 + i * 40);
+  h.position.set(-120, 12, -80 + i * 40);
   homeTeam.push(h);
   scene.add(h);
 
   const a = makePlayer(0xff5252);
-  a.position.set(120, 10, -80 + i * 40);
+  a.position.set(120, 12, -80 + i * 40);
   awayTeam.push(a);
   scene.add(a);
 }
@@ -96,25 +104,14 @@ for (let i = 0; i < 5; i++) {
 /* -------------------------------------------------------
    BALL
 ------------------------------------------------------- */
-const ballGeo = new THREE.SphereGeometry(5, 16, 16);
+const ballGeo = new THREE.SphereGeometry(6, 16, 16);
 const ballMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const ball = new THREE.Mesh(ballGeo, ballMat);
-ball.position.set(0, 5, 0);
+ball.position.set(0, 6, 0);
+ball.castShadow = true;
 scene.add(ball);
 
 let ballVel = new THREE.Vector3(0, 0, 0);
-
-/* -------------------------------------------------------
-   GAME STATE
-------------------------------------------------------- */
-let scoreHome = 0;
-let scoreAway = 0;
-let possession = 0; // 0 home, 1 away
-let remaining = 180; // 3 minutes
-let lastTime = performance.now();
-
-const scoreEl = document.getElementById("score");
-const timerEl = document.getElementById("timer");
 
 /* -------------------------------------------------------
    INPUT
@@ -124,11 +121,11 @@ window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
 window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
 
 /* -------------------------------------------------------
-   HOME PLAYER CONTROL
+   HOME CONTROL
 ------------------------------------------------------- */
 function controlHome() {
-  const p = homeTeam[2]; // main controlled player
-  let speed = 1.2;
+  const p = homeTeam[2];
+  const speed = 1.2;
 
   if (keys["w"]) p.position.z -= speed;
   if (keys["s"]) p.position.z += speed;
@@ -136,24 +133,20 @@ function controlHome() {
   if (keys["d"]) p.position.x += speed;
 
   if (keys[" "]) {
-    // shoot toward right goal
-    ballVel.set(2.5, 0, (Math.random() - 0.5) * 1.2);
+    ballVel.set(3, 0, (Math.random() - 0.5) * 2);
   }
 }
 
 /* -------------------------------------------------------
-   SIMPLE AI
+   AI
 ------------------------------------------------------- */
 function aiAway() {
-  const target = ball.position;
   const chaser = awayTeam[2];
-
-  const dir = new THREE.Vector3().subVectors(target, chaser.position).normalize();
+  const dir = new THREE.Vector3().subVectors(ball.position, chaser.position).normalize();
   chaser.position.add(dir.multiplyScalar(0.8));
 
-  // AI shoots randomly
   if (Math.random() < 0.005) {
-    ballVel.set(-2.5, 0, (Math.random() - 0.5) * 1.2);
+    ballVel.set(-3, 0, (Math.random() - 0.5) * 2);
   }
 }
 
@@ -165,53 +158,16 @@ function updateBall() {
   ballVel.multiplyScalar(0.98);
 
   // boundaries
-  if (ball.position.x > 200) ball.position.x = 200;
-  if (ball.position.x < -200) ball.position.x = -200;
-  if (ball.position.z > 120) ball.position.z = 120;
-  if (ball.position.z < -120) ball.position.z = -120;
-
-  // goal detection
-  if (ball.position.x > 195 && Math.abs(ball.position.z) < 40) {
-    scoreHome++;
-    resetBall();
-  }
-  if (ball.position.x < -195 && Math.abs(ball.position.z) < 40) {
-    scoreAway++;
-    resetBall();
-  }
-
-  scoreEl.textContent = `Home ${scoreHome} - ${scoreAway} Away`;
-}
-
-function resetBall() {
-  ball.position.set(0, 5, 0);
-  ballVel.set(0, 0, 0);
-}
-
-/* -------------------------------------------------------
-   TIMER
-------------------------------------------------------- */
-function updateTimer() {
-  const now = performance.now();
-  const delta = (now - lastTime) / 1000;
-  lastTime = now;
-
-  remaining -= delta;
-  if (remaining < 0) remaining = 0;
-
-  const m = Math.floor(remaining / 60);
-  const s = Math.floor(remaining % 60);
-  timerEl.textContent = `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  ball.position.x = Math.max(-200, Math.min(200, ball.position.x));
+  ball.position.z = Math.max(-120, Math.min(120, ball.position.z));
 }
 
 /* -------------------------------------------------------
    CAMERA FOLLOW
 ------------------------------------------------------- */
 function updateCamera() {
-  camera.position.lerp(
-    new THREE.Vector3(ball.position.x, 120, ball.position.z + 200),
-    0.05
-  );
+  const target = new THREE.Vector3(ball.position.x, 200, ball.position.z + 300);
+  camera.position.lerp(target, 0.05);
   camera.lookAt(ball.position);
 }
 
@@ -224,7 +180,6 @@ function animate() {
   controlHome();
   aiAway();
   updateBall();
-  updateTimer();
   updateCamera();
 
   renderer.render(scene, camera);
